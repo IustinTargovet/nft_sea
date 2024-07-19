@@ -2,54 +2,88 @@
 
 import React, { useState } from 'react';
 import { pinFileToIPFS, pinJSONToIPFS } from '../../pinata';
+import Confirmation from './Confirmation';
+import { useWriteContract } from 'wagmi';
+import { abi } from '@/abi';
 
 const MintingForm: React.FC = () => {
   const [image, setImage] = useState<File | null>(null);
   const [uploading, setUploading] = useState<boolean>(false);
-  const [ipfsHash, setIpfsHash] = useState<string | null>(null);
-  const [metadataURI, setMetadataURI] = useState<string | null>(null);
+  const [minting, setMinting] = useState<boolean>(false);
   const [title, setTitle] = useState<string>('');
   const [description, setDescription] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<boolean>(false);
+  const [imageHash, setImageHash] = useState<string | null>(null);
+  const [metadataURI, setMetadataURI] = useState<string | null>(null);
 
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const {  writeContract } = useWriteContract();
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setImage(e.target.files[0]);
-      await uploadImage(e.target.files[0]);
-    }
-  };
-
-  const uploadImage = async (file: File) => {
-    setUploading(true);
-    try {
-      const result = await pinFileToIPFS(file);
-      setIpfsHash(result.IpfsHash);
-    } catch (error) {
-      console.error('Error uploading image:', error);
-    } finally {
-      setUploading(false);
     }
   };
 
   const handleMint = async () => {
-    if (!ipfsHash || !title || !description) return;
-
-    const metadata = {
-      description,
-      external_url: '', // You can set this to your project's external URL if needed
-      image: `https://ipfs.io/ipfs/${ipfsHash}`,
-      name: title,
-    };
+    if (!image || !title || !description) return;
+    setMinting(true);
+    setError(null);
 
     try {
-      const result = await pinJSONToIPFS(metadata);
-      setMetadataURI(result.IpfsHash);
-      // Proceed with calling the mint function on the contract here
+      // Upload image to IPFS
+      const imageResult = await pinFileToIPFS(image);
+      const imageHash = imageResult.IpfsHash;
+      setImageHash(imageHash);
+
+      // Create metadata JSON object
+      const metadata = {
+        description,
+        external_url: '', // Set this to your project's external URL if needed
+        image: `https://ipfs.io/ipfs/${imageHash}`,
+        name: title,
+      };
+
+      // Upload metadata to IPFS
+      const metadataResult = await pinJSONToIPFS(metadata);
+      const metadataURI = metadataResult.IpfsHash;
+      setMetadataURI(metadataURI);
+
+      // Generate a token ID (you can use a timestamp, a counter, or any other unique method)
+      const newTokenId = Math.floor(Date.now() / 1000);
+
+      // Mint the NFT
+      const addressEnv = process.env.NEXT_PUBLIC_NFT_ADDRESS || '';
+      const address: `0x${string}` = addressEnv.startsWith('0x') ? addressEnv as `0x${string}` : '0x' as `0x${string}`;
+
+      const tx = await writeContract({
+        address,
+        abi,
+        functionName: 'mint',
+        args: [newTokenId, metadataURI],
+      });
+
+      console.log(`Transaction Hash: ${tx}`);
+      setSuccess(true);
     } catch (error) {
-      console.error('Error uploading metadata:', error);
+      console.error('Error during minting:', error);
+      setError('Minting failed. Please try again.');
+    } finally {
+      setMinting(false);
     }
   };
 
-  const isFormIncomplete = !ipfsHash || !title || !description;
+  const handleContinue = () => {
+    setImage(null);
+    setTitle('');
+    setDescription('');
+    setError(null);
+    setSuccess(false);
+    setImageHash(null);
+    setMetadataURI(null);
+  };
+
+  const isFormIncomplete = !image || !title || !description;
 
   return (
     <div className="flex flex-col items-center bg-white bg-opacity-10 p-8 rounded-lg shadow-lg">
@@ -64,12 +98,6 @@ const MintingForm: React.FC = () => {
             <span className="text-gray-400">📤 Upload Image</span>
             <span className="text-gray-500 mt-2 block">format supported</span>
             {image && <span className="text-white mt-2">{image.name}</span>}
-            {uploading && <span className="text-white mt-2">Uploading...</span>}
-            {ipfsHash && (
-              <div className="mt-4 text-white">
-                Image uploaded to IPFS: <a href={`https://ipfs.io/ipfs/${ipfsHash}`} target="_blank" rel="noopener noreferrer">{ipfsHash}</a>
-              </div>
-            )}
           </label>
         </div>
       </div>
@@ -89,23 +117,20 @@ const MintingForm: React.FC = () => {
       <div className="flex space-x-4 mt-6">
         <button
           onClick={handleMint}
-          className={`px-6 py-3 font-semibold rounded-lg ${isFormIncomplete ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-pink-500 text-white'}`}
-          disabled={isFormIncomplete}
+          className={`px-6 py-3 font-semibold rounded-lg ${isFormIncomplete || minting ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-pink-500 text-white'}`}
+          disabled={isFormIncomplete || minting}
         >
-          Mint without listing
-        </button>
-        <button
-          onClick={handleMint}
-          className={`px-6 py-3 font-semibold rounded-lg ${isFormIncomplete ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-pink-500 text-white'}`}
-          disabled={isFormIncomplete}
-        >
-          Mint and list immediately
+          {minting ? 'Minting...' : 'Mint'}
         </button>
       </div>
-      {metadataURI && (
-        <div className="mt-4 text-white">
-          Metadata uploaded to IPFS: <a href={`https://ipfs.io/ipfs/${metadataURI}`} target="_blank" rel="noopener noreferrer">{metadataURI}</a>
-        </div>
+      {error && <div className="mt-4 text-red-500">{error}</div>}
+      {success && imageHash && metadataURI && (
+        <Confirmation
+          title={title}
+          description={description}
+          imageUrl={`https://ipfs.io/ipfs/${imageHash}`}
+          onContinue={handleContinue}
+        />
       )}
     </div>
   );
